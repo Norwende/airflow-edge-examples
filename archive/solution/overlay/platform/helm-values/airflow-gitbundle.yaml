@@ -1,0 +1,24 @@
+# docs/09 étape 15.a : le bundle team-iot devient un GitDagBundle (dépôt Gitea in-cluster, platform/gitea/).
+# Overlay à passer APRÈS airflow.yaml (une liste Helm est remplacée en bloc, d'où la liste complète) :
+#   helm upgrade --install airflow apache-airflow/airflow -n airflow-edge --version 1.22.0 \
+#     -f platform/helm-values/airflow.yaml -f platform/helm-values/airflow-gitbundle.yaml --timeout 15m
+# Prérequis : connexion `gitea_iot` (type git) créée au centre, cf. teams/team-iot/README.md ;
+# le worker doit avoir la MÊME définition de bundle (teams/team-iot/k8s-gitbundle/).
+# Retour arrière : relancer helm upgrade avec airflow.yaml seul.
+dagProcessor:
+  dagBundleConfigList:
+    - name: core
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/core }
+    - name: team-data
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/team-data/..data }
+    - name: team-search
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/team-search/..data }
+    - name: laptop
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/laptop/..data }
+    - name: team-iot # GitDagBundle : code épinglé par run (bundle_version = SHA du commit)
+      classpath: airflow.providers.git.bundles.git.GitDagBundle
+      kwargs: { git_conn_id: gitea_iot, tracking_ref: main, refresh_interval: 60 }

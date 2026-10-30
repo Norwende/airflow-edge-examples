@@ -1,0 +1,173 @@
+# Valeurs du chart officiel Apache Airflow 1.22.0 pour l'instance CENTRALE (Airflow 3.3.2).
+#
+#   docker build -t airflow-edge/airflow-central:3.3.2 platform/central-image
+#   helm upgrade --install airflow apache-airflow/airflow -n airflow-edge \
+#     --version 1.22.0 -f platform/helm-values/airflow.yaml --timeout 15m
+#
+# UI / API : http://airflow-edge.localhost (admin / admin)
+
+# Le chart 1.22.0 a appVersion 3.2.2 : on force la version (le chart adapte ses
+# templates à cette valeur) et on fournit notre image (officielle + provider edge3).
+airflowVersion: "3.3.2"
+images:
+  airflow:
+    repository: airflow-edge/airflow-central
+    tag: "3.3.2"
+    pullPolicy: IfNotPresent # image construite localement (dockerd de Rancher Desktop)
+
+# Executors hybrides : le PREMIER est le défaut.
+#  - LocalExecutor : tâches "classiques" (DAGs core) en sous-process du scheduler ;
+#  - EdgeExecutor  : tâches marquées executor="EdgeExecutor" (+ queue=<équipe>), tirées
+#    par les edge workers via l'API HTTP de l'api-server. Chemin complet obligatoire :
+#    les templates du chart testent cette chaîne.
+executor: "LocalExecutor,airflow.providers.edge3.executors.EdgeExecutor"
+
+# Aucun pod lancé par Airflow (ni KubernetesExecutor ni KubernetesPodOperator).
+allowPodLaunching: false
+
+# Secrets FIXES (démo) : les workers (dont celui hors cluster) doivent partager le
+# même jwtSecret, sinon 403 ; un secret généré changerait à chaque `helm upgrade`.
+jwtSecret: "airflow-edge-demo-jwt-secret-please-change-0123456789"
+fernetKey: "YWlyZmxvdy1lZGdlLWRlbW8tZmVybmV0LWtleS0zMmI="
+apiSecretKey: "airflow-edge-demo-api-secret-key"
+
+# Jobs "normaux" (pas des hooks Helm) : compatibles `helm template | kubectl apply`
+# et pas de blocage de `helm upgrade --wait`.
+createUserJob:
+  useHelmHooks: false
+  applyCustomEnv: false # admin / admin par défaut
+migrateDatabaseJob:
+  useHelmHooks: false
+  applyCustomEnv: false
+
+config:
+  core:
+    load_examples: "False"
+    # Nombre de process LocalExecutor PRÉ-FORKÉS dans le scheduler (32 par défaut,
+    # ~1 Go de RAM) ; c'est aussi le nombre de créneaux de chaque executor (Edge compris).
+    parallelism: 8
+  api:
+    base_url: http://airflow-edge.localhost
+  database:
+    # Les tables edge_worker / edge_job / edge_logs sont gérées par `airflow db migrate`
+    # (job migrateDatabaseJob) via le DB manager du provider.
+    external_db_managers: airflow.providers.edge3.models.db.EdgeDBManager
+  edge:
+    # Monte le plugin d'API /edge_worker/* sur l'api-server (sinon pas de route).
+    api_enabled: "True"
+    # URL vue par le scheduler (EdgeExecutor) ; les workers ont leur propre valeur.
+    api_url: http://airflow-api-server.airflow-edge.svc.cluster.local:8080/edge_worker/v1/rpcapi
+  dag_processor:
+    # Airflow 3 : fréquence de rafraîchissement des bundles (remplace
+    # [scheduler] dag_dir_list_interval d'Airflow 2). Démo : 30 s.
+    refresh_interval: 30
+
+# 1 DAG bundle par source de code, NOMS IDENTIQUES sur les workers (le worker résout
+# le fichier DAG par NOM de bundle + chemin RELATIF du fichier : les chemins absolus
+# peuvent différer). Pas de bundle "dags-folder" par défaut.
+#
+# PIÈGE ConfigMap : un volume ConfigMap contient "..2026_10_17_xx/" (vrai répertoire)
+# et "..data -> ..2026_10_17_xx" (symlink, remplacé atomiquement à chaque mise à jour).
+# Le dag-processor parcourt les bundles en suivant les liens et PLANTE ("Detected
+# recursive loop") sur la racine du montage -- même ConfigMap absente (optional: true :
+# kubelet crée quand même ..data). On pointe donc les bundles d'équipe sur "<montage>/..data" :
+# uniquement les vrais fichiers, toujours la dernière version publiée.
+dagProcessor:
+  dagBundleConfigList:
+    - name: core # cuit dans l'image centrale
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/core }
+    - name: team-data # ConfigMap dags-team-data
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/team-data/..data }
+    - name: team-search # ConfigMap dags-team-search
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/team-search/..data }
+    - name: laptop # ConfigMap dags-laptop
+      classpath: airflow.dag_processing.bundles.local.LocalDagBundle
+      kwargs: { path: /opt/airflow/dags/laptop/..data }
+  # ConfigMaps optionnelles (une équipe peut ne rien avoir publié) ; montage de
+  # répertoire SANS subPath, pour que les mises à jour de la ConfigMap soient propagées.
+  extraVolumes: &teamDagVolumes
+    - name: dags-team-data
+      configMap: { name: dags-team-data, optional: true }
+    - name: dags-team-search
+      configMap: { name: dags-team-search, optional: true }
+    - name: dags-laptop
+      configMap: { name: dags-laptop, optional: true }
+  extraVolumeMounts: &teamDagMounts
+    - { name: dags-team-data, mountPath: /opt/airflow/dags/team-data, readOnly: true }
+    - { name: dags-team-search, mountPath: /opt/airflow/dags/team-search, readOnly: true }
+    - { name: dags-laptop, mountPath: /opt/airflow/dags/laptop, readOnly: true }
+  resources:
+    requests: { cpu: 50m, memory: 384Mi }
+    limits: { memory: 1Gi }
+  logGroomerSidecar:
+    enabled: false
+
+scheduler:
+  # Mêmes montages : une tâche d'équipe qui tombe sur l'executor par défaut (ex. @asset,
+  # qui n'accepte pas executor=) s'exécute ici et doit trouver son bundle.
+  extraVolumes: *teamDagVolumes
+  extraVolumeMounts: *teamDagMounts
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 1536Mi }
+  logGroomerSidecar:
+    enabled: false
+
+apiServer:
+  # 1 SEUL replica : les logs des tâches Edge sont poussés vers l'api-server et
+  # écrits sur son disque local (emptyDir) ; plusieurs replicas = logs éparpillés.
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 512Mi }
+    limits: { memory: 1536Mi }
+
+triggerer:
+  enabled: true
+  persistence:
+    enabled: false # logs en emptyDir, pas de PVC
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { memory: 768Mi }
+  logGroomerSidecar:
+    enabled: false
+
+ingress:
+  apiServer:
+    enabled: true
+    ingressClassName: traefik
+    path: /
+    pathType: Prefix
+    hosts:
+      - name: airflow-edge.localhost
+
+# Composants inutiles ici.
+redis:
+  enabled: false # seulement pour CeleryExecutor
+workers:
+  replicas: 0 # pas de workers Celery : les workers sont les edge workers des équipes
+  # En LocalExecutor, le chart fait du scheduler un StatefulSet avec le PVC de logs
+  # "des workers" (100Gi par défaut) : les logs des tâches locales survivent à un
+  # redémarrage du scheduler. On réduit la taille.
+  persistence:
+    size: 1Gi
+statsd:
+  enabled: false
+networkPolicies:
+  enabled: false
+
+postgresql:
+  enabled: true
+  primary:
+    resources:
+      requests: { cpu: 50m, memory: 128Mi }
+      limits: { memory: 512Mi }
+    persistence:
+      size: 2Gi
+
+# Logs : emptyDir par défaut (pas de PVC partagé : local-path ne fait pas de RWX).
+logs:
+  persistence:
+    enabled: false

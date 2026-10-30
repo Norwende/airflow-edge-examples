@@ -1,0 +1,18 @@
+# Le worker résout le DAG par NOM de bundle : la définition doit être celle du centre
+# (GitDagBundle, même git_conn_id / tracking_ref). Sans base de données, la connexion git
+# lui est fournie par variable d'environnement AIRFLOW_CONN_<ID>. Le worker clone lui-même
+# le dépôt (git + provider git présents dans l'image officielle) et exécute le commit du run.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: team-iot-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - name: AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST
+              value: '[{"name":"team-iot","classpath":"airflow.providers.git.bundles.git.GitDagBundle","kwargs":{"git_conn_id":"gitea_iot","tracking_ref":"main","refresh_interval":60}}]'
+            - name: AIRFLOW_CONN_GITEA_IOT
+              value: '{"conn_type":"git","host":"http://gitea-http.airflow-edge.svc.cluster.local:3000/gitea_admin/team-iot-dags.git","login":"gitea_admin","password":"gitea12345"}'

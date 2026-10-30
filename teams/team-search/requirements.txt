@@ -1,0 +1,7 @@
+# Libs spécifiques à team-search (installées avec les contraintes Airflow 3.3.2 / Python 3.13)
+apache-airflow-providers-edge3==4.3.2
+elasticsearch>=8.15,<9  # serveur ES 8.x : le client 9.x est refusé (compatible-with=9)
+pandas
+pyarrow
+boto3
+pytest

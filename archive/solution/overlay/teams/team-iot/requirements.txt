@@ -1,0 +1,11 @@
+# Documentaire : ce que l'image worker team-iot installe (cf. Dockerfile).
+# Versions résolues par constraints-3.3.2/constraints-3.10.txt (vérifié au build, Python 3.10.21).
+apache-airflow==3.3.2
+apache-airflow-providers-edge3==4.3.2
+apache-airflow-providers-amazon[s3fs]==9.36.0   # s3fs 2026.7.0 : ObjectStoragePath, XCom/log S3
+numpy==2.2.6
+scikit-learn==1.5.2
+boto3==1.43.75
+# déjà dans l'image de base : common-io 1.9.0, smtp 3.0.4, http 6.1.0, standard 1.19.0
+# tests uniquement (hors contraintes) :
+pytest

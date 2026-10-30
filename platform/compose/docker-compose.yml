@@ -1,0 +1,199 @@
+# Instance CENTRALE Airflow 3.3.2 + Edge Executor SANS Kubernetes (docker compose).
+#
+# Dérivé du docker-compose.yaml officiel 3.3.2 (https://airflow.apache.org/docs/apache-airflow/3.3.2/docker-compose.yaml) :
+# mêmes services api-server / scheduler / dag-processor / triggerer / postgres / airflow-init, mais
+#  - image = la nôtre (apache/airflow:3.3.2 + provider edge3 4.3.2 + DAGs core) : platform/central-image ;
+#  - executors hybrides LocalExecutor,EdgeExecutor (pas de Celery : ni redis ni airflow-worker) ;
+#  - MinIO + Elasticsearch (les systèmes externes de la démo) dans le même réseau ;
+#  - connexions et variable fournies par variables d'environnement (AIRFLOW_CONN_*, AIRFLOW_VAR_*) ;
+#  - DAGs d'équipe montés depuis teams/<team>/dags (répertoires ordinaires : pas de suffixe ..data).
+#
+#   cd platform/compose
+#   cp .env.example .env                       # optionnel
+#   docker compose build                       # ou : docker build -t airflow-edge/airflow-central:3.3.2 ../central-image
+#   docker compose up airflow-init             # migrations + utilisateur admin/admin
+#   docker compose up -d
+#   UI : http://localhost:8080 (admin / admin) ; MinIO console : http://localhost:9001 ; ES : http://localhost:9200
+#
+# Workers : voir docs/10-reproduire.md §5.4 (api_url = http://host.docker.internal:8080/edge_worker/v1/rpcapi
+# depuis un autre conteneur, http://localhost:8080/... depuis un venv WSL/Linux).
+name: airflow-edge-central
+
+x-airflow-common: &airflow-common
+  image: ${AIRFLOW_IMAGE_NAME:-airflow-edge/airflow-central:3.3.2}
+  build:
+    context: ../central-image
+  environment: &airflow-common-env
+    # --- cœur (identique aux values Helm platform/helm-values/airflow.yaml) ---
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor,airflow.providers.edge3.executors.EdgeExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+    AIRFLOW__CORE__PARALLELISM: "8"
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:-YWlyZmxvdy1lZGdlLWRlbW8tZmVybmV0LWtleS0zMmI=}
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    # --- API / Execution API (les tâches et les workers passent par l'api-server) ---
+    AIRFLOW__API__BASE_URL: ${AIRFLOW_BASE_URL:-http://localhost:8080}
+    AIRFLOW__API__SECRET_KEY: ${API_SECRET_KEY:-airflow-edge-demo-api-secret-key}
+    AIRFLOW__API_AUTH__JWT_SECRET: ${JWT_SECRET:-airflow-edge-demo-jwt-secret-please-change-0123456789}
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # --- Edge Executor ---
+    AIRFLOW__EDGE__API_ENABLED: "True"
+    AIRFLOW__EDGE__API_URL: http://airflow-apiserver:8080/edge_worker/v1/rpcapi
+    # --- DAG bundles : mêmes NOMS qu'en k8s ; chemins = montages ci-dessous ---
+    AIRFLOW__DAG_PROCESSOR__REFRESH_INTERVAL: "30"
+    AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST: >-
+      [{"name":"core","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/airflow/dags/core"}},
+       {"name":"team-data","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/airflow/dags/team-data"}},
+       {"name":"team-search","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/airflow/dags/team-search"}},
+       {"name":"laptop","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/airflow/dags/laptop"}}]
+    # --- connexions / variable du contrat, lues par l'Execution API (backend "variables d'environnement") ---
+    AIRFLOW_CONN_MINIO_S3: '{"conn_type":"aws","login":"minio","password":"minio12345","extra":{"endpoint_url":"http://minio:9000","region_name":"us-east-1"}}'
+    AIRFLOW_CONN_ELASTICSEARCH_DEFAULT: '{"conn_type":"elasticsearch","host":"elasticsearch","port":9200,"schema":"http"}'
+    AIRFLOW_VAR_DATALAKE_BUCKET: datalake
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+  volumes:
+    - ../../teams/team-data/dags:/opt/airflow/dags/team-data:ro
+    - ../../teams/team-search/dags:/opt/airflow/dags/team-search:ro
+    - ../../teams/laptop/dags:/opt/airflow/dags/laptop:ro
+    - logs:/opt/airflow/logs # partagé : l'api-server sert les logs écrits par le scheduler (LocalExecutor)
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-common-depends-on
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: always
+
+  # Migrations (tables edge_* comprises : EdgeDBManager est enregistré automatiquement depuis Airflow 3.2)
+  # + utilisateur admin/admin. L'entrypoint de l'image officielle lit _AIRFLOW_DB_MIGRATE / _AIRFLOW_WWW_USER_*.
+  airflow-init:
+    <<: *airflow-common
+    command: version
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: "true"
+      _AIRFLOW_WWW_USER_CREATE: "true"
+      _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-admin}
+      _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-admin}
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-apiserver:
+        condition: service_healthy
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-triggerer:
+    <<: *airflow-common
+    command: triggerer
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type TriggererJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # --- systèmes externes de la démo (équivalents de platform/minio et platform/elasticsearch) ---
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio12345
+    ports:
+      - "9000:9000" # API S3 (vue des workers hors compose : http://host.docker.internal:9000)
+      - "9001:9001" # console
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/ready"]
+      interval: 5s
+      retries: 20
+    restart: always
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["sh", "-c"]
+    command:
+      - mc alias set local http://minio:9000 minio minio12345 && mc mb --ignore-existing local/datalake && mc ls local
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.19.6
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms256m -Xmx256m
+    ports:
+      - "9200:9200"
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+    restart: always
+
+volumes:
+  postgres-db-volume:
+  logs:
+  minio-data:
+  es-data:

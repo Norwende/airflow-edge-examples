@@ -1,0 +1,43 @@
+# Worker edge "laptop" : tourne HORS du cluster et rejoint l'api-server central via l'ingress Traefik.
+# Usage : docker compose up -d --build   (cp .env.example .env pour surcharger)
+name: airflow-edge-laptop
+
+services:
+  laptop-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: airflow-edge/worker-laptop:dev
+    restart: unless-stopped
+    # hostname du conteneur = nom du worker edge : le champ `hostname` des task instances et
+    # socket.gethostname() dans les tâches valent laptop-<USERNAME> (au lieu de l'id du conteneur).
+    hostname: laptop-${USERNAME:-dev}
+    # Arrêt propre : SIGINT = "drain" (le worker finit ses tâches, n'en prend plus) ;
+    # SIGTERM tuerait les tâches en cours. Après 30 s de drain les tâches reçoivent SIGTERM
+    # (AIRFLOW__EDGE__DRAIN_TIMEOUT_SEC), puis docker envoie SIGKILL à 60 s.
+    stop_signal: SIGINT
+    stop_grace_period: 60s
+    volumes:
+      - ./dags:/opt/airflow/dags/laptop:ro   # édition live des DAGs, sans rebuild
+      - ./logs:/opt/airflow/logs             # logs + laptop-proof.txt visibles sur l'hôte
+      - venvs:/opt/airflow/.venvs            # cache des venvs @task.virtualenv (survit aux rebuilds)
+    extra_hosts:
+      # *.localhost -> IP de l'hôte (passerelle Docker) -> Traefik (ports 80 publiés par Rancher Desktop)
+      - "airflow-edge.localhost:host-gateway"
+      - "minio.localhost:host-gateway"
+    environment:
+      AIRFLOW__CORE__EXECUTOR: airflow.providers.edge3.executors.EdgeExecutor
+      AIRFLOW__EDGE__API_URL: ${EDGE_API_URL:-http://airflow-edge.localhost/edge_worker/v1/rpcapi}
+      AIRFLOW__API_AUTH__JWT_SECRET: ${JWT_SECRET:-airflow-edge-demo-jwt-secret-please-change-0123456789}
+      AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST: '[{"name":"laptop","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/airflow/dags/laptop"}}]'
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__LOGGING__BASE_LOG_FOLDER: /opt/airflow/logs
+      AIRFLOW__EDGE__HEARTBEAT_INTERVAL: "10"
+      AIRFLOW__EDGE__JOB_POLL_INTERVAL: "2"
+      AIRFLOW__EDGE__DRAIN_TIMEOUT_SEC: "30"
+      EDGE_HOSTNAME: laptop-${USERNAME:-dev}
+      # endpoint S3 propre à cet environnement (surcharge l'endpoint in-cluster de la connexion minio_s3)
+      MINIO_ENDPOINT_URL: ${MINIO_ENDPOINT_URL:-http://minio.localhost}
+
+volumes:
+  venvs:

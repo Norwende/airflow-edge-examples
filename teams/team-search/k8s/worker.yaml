@@ -1,0 +1,99 @@
+# Edge worker team-search : se connecte à l'API edge du central (pas de DB, pas de fernet)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: team-search-worker
+  namespace: team-search
+  labels:
+    app: team-search-worker
+spec:
+  replicas: 1          # hostname fixe (-H team-search-worker-1) → 1 seul replica
+  strategy:
+    type: Recreate     # évite deux workers avec la même identité pendant un rollout
+  selector:
+    matchLabels:
+      app: team-search-worker
+  template:
+    metadata:
+      labels:
+        app: team-search-worker
+    spec:
+      # hostname du pod = nom du worker edge (-H) : le champ `hostname` des task instances
+      # (socket.getfqdn) et socket.gethostname() dans les tâches affichent alors team-search-worker-1
+      # au lieu du nom de pod aléatoire.
+      hostname: team-search-worker-1
+      # Arrêt propre (scale 0, rollout, drain de nœud) : kubelet envoie SIGTERM au PID 1 (dumb-init,
+      # DUMB_INIT_SETSID=1 -> relayé au groupe), et le worker edge traite SIGTERM comme un ARRÊT DUR
+      # (SIGTERM aux tâches en cours). Le hook preStop ci-dessous déclenche d'abord le DRAIN :
+      # SIGINT au seul process `airflow edge worker` (PID lu dans son pid file, comme `airflow edge
+      # stop`), puis attend sa sortie ; le worker finit ses tâches, n'en prend plus, passe offline.
+      # Drain borné : DRAIN_TIMEOUT_SEC=45 puis SIGTERM aux tâches, SIGKILL 30 s plus tard
+      # (drain_kill_grace_sec) => 75 s max < terminationGracePeriodSeconds (90).
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: worker
+          image: airflow-edge/worker-team-search:dev
+          imagePullPolicy: IfNotPresent
+          # commande = CMD de l'image : airflow edge worker -q team-search -c 2 -H team-search-worker-1
+          lifecycle:
+            preStop:
+              exec:
+                # Pas de pkill/ps dans l'image : pid file écrit par le worker
+                # ($AIRFLOW_HOME/airflow-edge-worker.pid). Équivalent : airflow edge stop --wait.
+                command:
+                  - sh
+                  - -c
+                  - >-
+                    pid=$(cat /opt/airflow/airflow-edge-worker.pid) && kill -INT "$pid" &&
+                    while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          env:
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: airflow.providers.edge3.executors.EdgeExecutor
+            - name: AIRFLOW__EDGE__API_URL
+              value: http://airflow-api-server.airflow-edge.svc.cluster.local:8080/edge_worker/v1/rpcapi
+            - name: AIRFLOW__API_AUTH__JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-edge-worker
+                  key: jwt-secret
+            - name: AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST
+              # Même nom de bundle qu'au centre ; chemin = "..data" de la ConfigMap montée ci-dessous
+              # (vrais fichiers, dernière version publiée ; la racine du montage contient des symlinks).
+              value: '[{"name":"team-search","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/airflow/dags/team-search/..data"}}]'
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "False"
+            - name: AIRFLOW__LOGGING__BASE_LOG_FOLDER
+              value: /opt/airflow/logs
+            - name: AIRFLOW__EDGE__HEARTBEAT_INTERVAL
+              value: "10"
+            - name: AIRFLOW__EDGE__JOB_POLL_INTERVAL
+              value: "2"
+            - name: AIRFLOW__EDGE__DRAIN_TIMEOUT_SEC
+              value: "45"  # drain borné (défaut 0 = attente infinie), voir preStop
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: logs
+              mountPath: /opt/airflow/logs
+            # DAGs de l'équipe = ConfigMap dags-team-search de CE namespace, publiée par la même commande
+            # que celle du centre (`uv run scripts/dags.py apply team-search [--version vN]`) :
+            # source unique, parsing (centre) et exécution (worker) voient le même code.
+            # Montage de répertoire SANS subPath : kubelet propage les mises à jour en ~1 min
+            # -> démo du versioning de DAG sans rebuild de l'image. Le montage masque la copie
+            # cuite dans l'image (COPY dags/), qui ne sert plus qu'aux tests locaux (docker run).
+            # En production : GitDagBundle (ou git-sync) remplace ce mécanisme.
+            - name: dags
+              mountPath: /opt/airflow/dags/team-search
+              readOnly: true
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: dags
+          # Non optionnelle : tant que dags.py apply n'a pas créé la ConfigMap, le pod reste en
+          # ContainerCreating (FailedMount) au lieu de démarrer sans DAGs.
+          configMap:
+            name: dags-team-search

@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.env
+*.local.yaml
+.scratch/
+# Logs du worker laptop (montés depuis le conteneur) : on garde seulement le répertoire.
+teams/laptop/logs/*
+!teams/laptop/logs/.gitkeep

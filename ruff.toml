@@ -1,0 +1,12 @@
+# uvx ruff check . && uvx ruff format --check .   (pas de pyproject : les scripts sont PEP 723)
+line-length = 110
+target-version = "py311"
+# Python seulement (ruff >= 0.17 formate aussi les blocs de code des .md : docs hors périmètre).
+extend-exclude = ["*.md"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[lint.isort]
+# Modules locaux importés par nom (scripts/ et bundle team-search dans le sys.path).
+known-first-party = ["_common", "build", "dags", "search_common", "laptop_air_common", "iot_common", "iot_triggers"]

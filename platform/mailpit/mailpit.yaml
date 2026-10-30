@@ -1,0 +1,62 @@
+# Mailpit : faux serveur SMTP + UI web pour voir les mails envoyés par Airflow (exercice docs/09,
+# étapes 5, 6, 11 : SmtpNotifier, notifiers HITL, alertes de deadline). Aucun mail ne sort.
+#   kubectl apply -f platform/mailpit/mailpit.yaml
+# SMTP (dans le cluster) : mailpit.airflow-edge.svc.cluster.local:1025 (sans TLS ni auth)
+# UI / API               : http://mailpit.localhost  (API : /api/v1/messages)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: airflow-edge
+  labels: { app: mailpit }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mailpit }
+  template:
+    metadata:
+      labels: { app: mailpit }
+    spec:
+      containers:
+        - name: mailpit
+          image: axllent/mailpit:v1.31.6
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: MP_MAX_MESSAGES, value: "500" } # stockage en mémoire/temp, borné
+            - { name: MP_SMTP_AUTH_ACCEPT_ANY, value: "true" } # accepte un login éventuel
+            - { name: MP_SMTP_AUTH_ALLOW_INSECURE, value: "true" } # ... même sans TLS
+          ports:
+            - { name: smtp, containerPort: 1025 }
+            - { name: http, containerPort: 8025 }
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: airflow-edge
+spec:
+  selector: { app: mailpit }
+  ports:
+    - { name: smtp, port: 1025, targetPort: smtp }
+    - { name: http, port: 8025, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mailpit
+  namespace: airflow-edge
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: mailpit.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: mailpit, port: { name: http } } }

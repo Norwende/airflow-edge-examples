@@ -1,0 +1,85 @@
+# Elasticsearch 8.x mono-nœud, sécurité désactivée (démo uniquement), heap 256 Mo.
+#   kubectl apply -f platform/elasticsearch/elasticsearch.yaml
+# http://es.localhost   (dans le cluster : http://elasticsearch.airflow-edge.svc.cluster.local:9200)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: elasticsearch-data
+  namespace: airflow-edge
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: elasticsearch
+  namespace: airflow-edge
+  labels: { app: elasticsearch }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app: elasticsearch }
+  template:
+    metadata:
+      labels: { app: elasticsearch }
+    spec:
+      securityContext:
+        fsGroup: 1000 # l'image tourne en uid 1000 : droits d'écriture sur le volume local-path
+      containers:
+        - name: elasticsearch
+          image: docker.elastic.co/elasticsearch/elasticsearch:8.19.6
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: discovery.type, value: single-node }
+            - { name: xpack.security.enabled, value: "false" }
+            - { name: xpack.ml.enabled, value: "false" } # économise de la RAM
+            - { name: ES_JAVA_OPTS, value: "-Xms256m -Xmx256m" }
+            # Disque de dev souvent bien rempli : on évite le passage en lecture seule.
+            - { name: cluster.routing.allocation.disk.threshold_enabled, value: "false" }
+          ports:
+            - { name: http, containerPort: 9200 }
+          readinessProbe:
+            httpGet:
+              path: /_cluster/health?wait_for_status=yellow&timeout=2s
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests: { cpu: 100m, memory: 768Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: data, mountPath: /usr/share/elasticsearch/data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: elasticsearch-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: elasticsearch
+  namespace: airflow-edge
+spec:
+  selector: { app: elasticsearch }
+  ports:
+    - { name: http, port: 9200, targetPort: http }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elasticsearch
+  namespace: airflow-edge
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: es.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: elasticsearch, port: { name: http } } }

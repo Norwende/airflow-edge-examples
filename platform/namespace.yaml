@@ -1,0 +1,21 @@
+# Namespace de la plateforme : instance Airflow centrale + MinIO + Elasticsearch.
+#   kubectl apply -f platform/namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: airflow-edge
+  labels:
+    app.kubernetes.io/part-of: airflow-edge-demo
+---
+# Valeurs par défaut pour les conteneurs qui n'en déclarent pas (Job minio-init...).
+# Le cluster est partagé avec d'autres projets : on reste sobre.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: defaults
+  namespace: airflow-edge
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m, memory: 64Mi }
+      default: { memory: 512Mi }

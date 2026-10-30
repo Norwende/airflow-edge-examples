@@ -1,0 +1,9 @@
+# Environnement Python du worker "laptop" (python:3.11-slim + uv).
+# Installé avec : uv pip install --system -r requirements.txt \
+#   --constraint https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.11.txt
+# Versions Airflow/edge3 = EXACTEMENT celles du serveur central.
+apache-airflow==3.3.2
+apache-airflow-providers-edge3==4.3.2
+duckdb
+boto3
+pytest

@@ -1,0 +1,57 @@
+# Gitea minimal pour l'étape 15.a de docs/09 (GitDagBundle) : SQLite, sans PostgreSQL ni Valkey.
+#   helm repo add gitea-charts https://dl.gitea.com/charts/
+#   helm upgrade --install gitea gitea-charts/gitea -n airflow-edge --version 12.7.0 -f platform/gitea/values.yaml
+# UI : http://gitea.localhost (gitea_admin / gitea12345). Démo uniquement : mot de passe en clair.
+replicaCount: 1
+strategy:
+  type: Recreate
+postgresql-ha:
+  enabled: false
+postgresql:
+  enabled: false
+valkey-cluster:
+  enabled: false
+valkey:
+  enabled: false
+test:
+  enabled: false
+persistence:
+  enabled: true
+  size: 1Gi
+resources:
+  requests: { cpu: 50m, memory: 128Mi }
+  limits: { memory: 512Mi }
+ingress:
+  enabled: true
+  className: traefik
+  hosts:
+    - host: gitea.localhost
+      paths:
+        - path: /
+          pathType: Prefix
+gitea:
+  admin:
+    username: gitea_admin
+    password: gitea12345
+    email: gitea@airflow-edge.localhost
+    passwordMode: keepUpdated
+  config:
+    database:
+      DB_TYPE: sqlite3
+    session:
+      PROVIDER: memory
+    cache:
+      ADAPTER: memory
+    queue:
+      TYPE: level
+    indexer:
+      ISSUE_INDEXER_TYPE: bleve
+      REPO_INDEXER_ENABLED: false
+    server:
+      ROOT_URL: http://gitea.localhost/
+      DOMAIN: gitea.localhost
+      SSH_DOMAIN: gitea.localhost
+    actions:
+      ENABLED: false
+    service:
+      DISABLE_REGISTRATION: true

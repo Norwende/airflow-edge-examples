@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-iot
+  labels:
+    app.kubernetes.io/part-of: airflow-edge
+    team: team-iot

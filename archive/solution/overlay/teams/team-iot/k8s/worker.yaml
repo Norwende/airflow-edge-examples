@@ -1,0 +1,109 @@
+# Worker edge de l'équipe team-iot (Python 3.10, numpy + scikit-learn) : se connecte à
+# l'api-server central (HTTP), pas de DB. Modèle : teams/team-data/k8s/worker.yaml (mêmes
+# explications pour hostname, preStop, drain). Ajouts docs/09 : connexion minio_s3 par env,
+# logging distant S3 (étape 12) et backend XCom object storage (étape 12).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: team-iot-worker
+  namespace: team-iot
+  labels:
+    app: team-iot-worker
+    team: team-iot
+spec:
+  replicas: 1  # hostname fixe (-H) -> 1 seul replica
+  strategy:
+    type: Recreate  # évite deux workers avec le même hostname pendant un rollout
+  selector:
+    matchLabels:
+      app: team-iot-worker
+  template:
+    metadata:
+      labels:
+        app: team-iot-worker
+        team: team-iot
+    spec:
+      # hostname du pod = nom du worker edge (-H) : champ `hostname` des task instances.
+      hostname: team-iot-worker-1
+      # preStop = drain (SIGINT au worker), borné à DRAIN_TIMEOUT_SEC=45 (+30 s de grâce) < 90 s.
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: worker
+          image: airflow-edge/worker-team-iot:dev
+          imagePullPolicy: IfNotPresent
+          args: ["airflow", "edge", "worker", "-q", "team-iot", "-c", "2", "-H", "team-iot-worker-1"]
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - sh
+                  - -c
+                  - >-
+                    pid=$(cat /opt/airflow/airflow-edge-worker.pid) && kill -INT "$pid" &&
+                    while kill -0 "$pid" 2>/dev/null; do sleep 1; done
+          env:
+            - name: AIRFLOW__CORE__EXECUTOR
+              value: airflow.providers.edge3.executors.EdgeExecutor
+            - name: AIRFLOW__EDGE__API_URL
+              value: http://airflow-api-server.airflow-edge.svc.cluster.local:8080/edge_worker/v1/rpcapi
+            - name: AIRFLOW__API_AUTH__JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-edge-worker
+                  key: jwt-secret
+            - name: AIRFLOW__DAG_PROCESSOR__DAG_BUNDLE_CONFIG_LIST
+              # Même nom de bundle qu'au centre ; chemin = "..data" de la ConfigMap montée.
+              value: '[{"name":"team-iot","classpath":"airflow.dag_processing.bundles.local.LocalDagBundle","kwargs":{"path":"/opt/airflow/dags/team-iot/..data"}}]'
+            - name: AIRFLOW__CORE__LOAD_EXAMPLES
+              value: "False"
+            - name: AIRFLOW__LOGGING__BASE_LOG_FOLDER
+              value: /opt/airflow/logs
+            - name: AIRFLOW__EDGE__HEARTBEAT_INTERVAL
+              value: "10"
+            - name: AIRFLOW__EDGE__JOB_POLL_INTERVAL
+              value: "2"
+            - name: AIRFLOW__EDGE__DRAIN_TIMEOUT_SEC
+              value: "45"
+            # --- docs/09 étape 12 : connexion minio_s3 (pas de DB sur le worker -> variable d'env)
+            - name: AIRFLOW_CONN_MINIO_S3
+              valueFrom:
+                secretKeyRef:
+                  name: airflow-edge-worker
+                  key: minio-conn
+            # Logging distant : le superviseur de tâche (sur CE worker) téléverse le log en fin de tâche.
+            - name: AIRFLOW__LOGGING__REMOTE_LOGGING
+              value: "True"
+            - name: AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER
+              value: s3://datalake/logs
+            - name: AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID
+              value: minio_s3
+            # XCom > 64 Kio stockés dans MinIO (référence seulement en base). Section [common.io] :
+            # le point du nom de section devient "_" dans la variable (parser 3.3.2 : section.replace(".", "_")).
+            - name: AIRFLOW__CORE__XCOM_BACKEND
+              value: airflow.providers.common.io.xcom.backend.XComObjectStorageBackend
+            - name: AIRFLOW__COMMON_IO__XCOM_OBJECTSTORAGE_PATH
+              value: s3://minio_s3@datalake/xcom
+            - name: AIRFLOW__COMMON_IO__XCOM_OBJECTSTORAGE_THRESHOLD
+              value: "65536"
+            - name: AIRFLOW__COMMON_IO__XCOM_OBJECTSTORAGE_COMPRESSION
+              value: gzip
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 100m
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: logs
+              mountPath: /opt/airflow/logs
+            # DAGs = ConfigMap dags-team-iot de CE namespace (uv run scripts/dags.py apply team-iot).
+            - name: dags
+              mountPath: /opt/airflow/dags/team-iot
+              readOnly: true
+      volumes:
+        - name: logs
+          emptyDir: {}
+        - name: dags
+          # Non optionnelle : pod en ContainerCreating tant que dags.py apply n'a pas créé la ConfigMap.
+          configMap:
+            name: dags-team-iot

@@ -1,0 +1,11 @@
+# docs/09 étape 15.a : même worker, mais le bundle team-iot est cloné depuis Gitea (GitDagBundle).
+#   kubectl apply -k teams/team-iot/k8s-gitbundle      (retour : kubectl apply -k teams/team-iot/k8s)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../k8s
+patches:
+  - path: worker-gitbundle-patch.yaml
+    target:
+      kind: Deployment
+      name: team-iot-worker

@@ -1,0 +1,9 @@
+# Documentaire : ce que l'image worker team-data installe (cf. Dockerfile).
+# Versions résolues par constraints-3.3.2/constraints-3.12.txt (vérifié au build).
+apache-airflow==3.3.2
+apache-airflow-providers-edge3==4.3.2
+polars==1.44.2
+boto3==1.43.75
+# pyarrow 25.0.1 est déjà dans l'image de base (non requis : polars écrit/lit le parquet seul)
+# tests uniquement (hors contraintes) :
+pytest

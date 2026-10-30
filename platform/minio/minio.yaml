@@ -1,0 +1,130 @@
+# MinIO (S3 local) : le "datalake" de la démo.
+#   kubectl apply -f platform/minio/minio.yaml
+# API     : http://minio.localhost          (dans le cluster : http://minio.airflow-edge.svc.cluster.local:9000)
+# Console : http://minio-console.localhost  (minio / minio12345)
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-creds
+  namespace: airflow-edge
+type: Opaque
+stringData:
+  MINIO_ROOT_USER: minio
+  MINIO_ROOT_PASSWORD: minio12345
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-data
+  namespace: airflow-edge
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: airflow-edge
+  labels: { app: minio }
+spec:
+  replicas: 1
+  strategy: { type: Recreate } # volume RWO : pas de rolling update
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          imagePullPolicy: IfNotPresent # image déjà présente dans le dockerd de Rancher Desktop
+          args: [server, /data, --console-address, ":9001"]
+          envFrom:
+            - secretRef: { name: minio-creds }
+          ports:
+            - { name: api, containerPort: 9000 }
+            - { name: console, containerPort: 9001 }
+          readinessProbe:
+            httpGet: { path: /minio/health/ready, port: api }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: api }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: minio-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: airflow-edge
+spec:
+  selector: { app: minio }
+  ports:
+    - { name: api, port: 9000, targetPort: api }
+    - { name: console, port: 9001, targetPort: console }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: minio
+  namespace: airflow-edge
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: minio.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: minio, port: { name: api } } }
+    - host: minio-console.localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: minio, port: { name: console } } }
+---
+# Création (idempotente) du bucket "datalake". Un Job est immuable : pour le rejouer,
+# `kubectl delete job minio-init -n airflow-edge` puis ré-appliquer ce fichier.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-init
+  namespace: airflow-edge
+spec:
+  backoffLimit: 10 # MinIO peut ne pas être prêt au premier essai
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: minio/mc:latest
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef: { name: minio-creds }
+          command: [sh, -c]
+          args:
+            - |
+              set -e
+              until mc alias set local http://minio:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                echo "MinIO pas encore prêt..."; sleep 3
+              done
+              mc mb --ignore-existing local/datalake
+              mc ls local
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 128Mi }
