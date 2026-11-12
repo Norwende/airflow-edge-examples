@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Preset partagé du lab GitOps (référencé local>gitops/renovate). CONTRACT.md §6.",
+  "extends": [
+    "config:recommended",
+    ":semanticCommits",
+    ":semanticCommitTypeAll(chore)",
+    ":semanticCommitScope(deps)",
+    ":timezone(Europe/Paris)",
+    ":label(renovate)",
+    "group:allNonMajor",
+    "docker:pinDigests"
+  ],
+  "dependencyDashboard": true,
+  "dependencyDashboardTitle": "Renovate : tableau de bord des dépendances",
+  "prHourlyLimit": 0,
+  "prConcurrentLimit": 10,
+  "rebaseWhen": "behind-base-branch",
+  "packageRules": [
+    {
+      "description": "Majeures : une MR par dépendance, jamais groupées (relecture humaine).",
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["major"]
+    },
+    {
+      "description": "Digests épinglés uniquement sur les images de base des Dockerfile.",
+      "matchManagers": ["gitlabci", "helm-values", "helmv3", "kubernetes"],
+      "pinDigests": false
+    }
+  ]
+}

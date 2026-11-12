@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "elastic values",
+  "type": "object",
+  "required": ["image", "env", "elasticsearch", "kibana"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+      },
+      "additionalProperties": false
+    },
+    "env": {"type": "string", "enum": ["dev", "prod"]},
+    "elasticsearch": {
+      "type": "object",
+      "required": ["name", "count"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "count": {"type": "integer", "minimum": 1},
+        "javaOpts": {"type": "string"},
+        "resources": {"type": "object"},
+        "storage": {
+          "type": "object",
+          "properties": {
+            "size": {"type": "string"},
+            "storageClass": {"type": "string"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "kibana": {
+      "type": "object",
+      "required": ["name", "host"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "count": {"type": "integer", "minimum": 0},
+        "host": {"type": "string", "minLength": 1},
+        "ingressClassName": {"type": "string"},
+        "resources": {"type": "object"}
+      },
+      "additionalProperties": false
+    },
+    "savedObjects": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"type": "string", "minLength": 1},
+        "maxAttempts": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

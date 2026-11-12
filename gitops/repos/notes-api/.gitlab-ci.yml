@@ -1,0 +1,343 @@
+# =============================================================================
+# CI/CD de gitops/notes-api — implémente CONTRACT.md §3 et §5.
+#
+#   MR feature/* -> develop, MR develop -> main :
+#       commitlint, lint, typecheck, tests (unit + intégration), build kaniko SANS push
+#   push/merge sur develop :
+#       tests + build/push  $CI_REGISTRY_IMAGE/develop/notes-api:<sha8>
+#       + promote-dev  (MR sur gitops/manifests, auto-merge quand la pipeline est verte)
+#   push/merge sur main :
+#       tests + semantic-release (tag vX.Y.Z + Release GitLab)
+#       + build/push $CI_REGISTRY_IMAGE/main/notes-api:<X.Y.Z>
+#       + promote-prod (MR sur gitops/manifests, merge humain par le lead)
+#
+# DAG (needs) :
+#   lint, typecheck, test (parallèles)  ─┬─> build-mr                     (MR)
+#                                        ├─> build-develop ─> promote-dev (develop)
+#                                        └─> release ─> build-main ─> promote-prod (main)
+# Toutes les images sont épinglées (Renovate, manager gitlabci, les met à jour).
+# =============================================================================
+
+stages:
+  - validate
+  - test
+  - release
+  - build
+  - promote
+
+# -----------------------------------------------------------------------------
+# Quand crée-t-on une pipeline ?
+# -----------------------------------------------------------------------------
+workflow:
+  rules:
+    # Jamais sur les tags : le tag vX.Y.Z posé par semantic-release ne redéclenche rien.
+    - if: $CI_COMMIT_TAG
+      when: never
+    # Pipelines de merge request (feature/* -> develop, develop -> main).
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # develop et main : push/merge, + lancement manuel (web) ou via l'API (le bootstrap déclenche
+    # la première pipeline par l'API, après avoir posé les protections). Cette règle passe AVANT la
+    # règle $CI_OPEN_MERGE_REQUESTS : une MR develop -> main est presque toujours ouverte, et sans
+    # cela aucun push sur develop ne construirait ni ne promouvrait l'image de dev.
+    - if: $CI_COMMIT_BRANCH =~ /^(develop|main)$/ && $CI_PIPELINE_SOURCE =~ /^(push|web|api)$/
+    # Pas de pipeline de branche quand une MR est ouverte pour cette branche (la pipeline de MR
+    # suffit) : évite les pipelines en double.
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    # Tout le reste (push sur une branche de fonctionnalité sans MR, schedules...) : rien.
+    - when: never
+
+default:
+  # Une nouvelle pipeline sur la même ref annule l'ancienne (sauf jobs interruptible: false).
+  interruptible: true
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+
+# -----------------------------------------------------------------------------
+# Règles réutilisables
+# -----------------------------------------------------------------------------
+.if-mr: &if-mr
+  if: $CI_PIPELINE_SOURCE == "merge_request_event"
+.if-develop: &if-develop
+  if: $CI_COMMIT_BRANCH == "develop" && $CI_PIPELINE_SOURCE != "merge_request_event"
+.if-main: &if-main
+  if: $CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE != "merge_request_event"
+
+# -----------------------------------------------------------------------------
+# Modèles
+# -----------------------------------------------------------------------------
+.node:
+  image: node:24.14.0-alpine
+  variables:
+    npm_config_cache: $CI_PROJECT_DIR/.npm
+  cache:
+    key:
+      prefix: npm
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  before_script:
+    - apk add --no-cache git
+    # Versions figées par package-lock.json (+ .npmrc : legacy-peer-deps).
+    - npm ci --prefer-offline --no-audit --no-fund
+
+.uv:
+  image: ghcr.io/astral-sh/uv:0.10.8-python3.13-trixie-slim
+  needs: []   # les jobs de test démarrent tout de suite, en parallèle
+  variables:
+    UV_CACHE_DIR: .uv-cache
+    UV_LINK_MODE: copy
+    UV_FROZEN: "1"   # `uv run` ne touche jamais au lock (équivaut à --frozen partout)
+    # .uv-cache et .npm sont dans le répertoire du projet (cache GitLab) : ruff ne doit pas les lire.
+    RUFF_EXTRA_EXCLUDE: .uv-cache,.npm
+  cache:
+    key:
+      prefix: uv
+      files:
+        - uv.lock
+    paths:
+      - .uv-cache/
+  before_script:
+    - uv sync --frozen
+  after_script:
+    # Garde le cache compact (supprime ce qui est reconstructible, garde les téléchargements).
+    - uv cache prune --ci || true
+
+# =============================================================================
+# validate
+# =============================================================================
+commitlint:
+  extends: .node
+  stage: validate
+  needs: []
+  rules:
+    - *if-mr
+  variables:
+    GIT_DEPTH: "0"   # historique complet : la base de la MR doit être présente
+  script:
+    # Tous les commits propres à la MR : de la base du diff (merge-base avec la cible) à HEAD.
+    - npx --no-install commitlint --from "$CI_MERGE_REQUEST_DIFF_BASE_SHA" --to HEAD --verbose
+
+# =============================================================================
+# test
+# =============================================================================
+lint:
+  extends: .uv
+  stage: test
+  script:
+    # Rapport Code Quality (format gitlab) : --exit-zero pour toujours produire le fichier...
+    - uv run ruff check . --extend-exclude "$RUFF_EXTRA_EXCLUDE" --output-format=gitlab --exit-zero > gl-code-quality-report.json
+    # ... puis la sortie lisible, qui fait échouer le job s'il y a des erreurs.
+    - uv run ruff check . --extend-exclude "$RUFF_EXTRA_EXCLUDE"
+    - uv run ruff format --check . --extend-exclude "$RUFF_EXTRA_EXCLUDE"
+  artifacts:
+    when: always
+    expire_in: 1 week
+    reports:
+      codequality: gl-code-quality-report.json
+
+typecheck:
+  extends: .uv
+  stage: test
+  script:
+    - uv run mypy
+
+test:
+  extends: .uv
+  stage: test
+  services:
+    # Executor Kubernetes : le service tourne dans le même pod, joignable sur 127.0.0.1.
+    - name: postgres:17-alpine
+      alias: postgres
+  variables:
+    POSTGRES_USER: notes
+    POSTGRES_PASSWORD: notes
+    POSTGRES_DB: notes
+    DATABASE_URL: postgresql://notes:notes@127.0.0.1:5432/notes
+  script:
+    # Attend que PostgreSQL accepte les connexions (le service démarre en même temps que le job).
+    - uv run python ci/wait_for_postgres.py
+    - uv run pytest --junitxml=reports/junit.xml --cov=notes_api --cov-report=xml:coverage.xml --cov-report=term --cov-fail-under=85
+    # Auto-test du script de promotion (stdlib, faux serveur GitLab local).
+    - uv run python -m unittest discover -s ci -p "test_*.py" -v
+  # Ligne "TOTAL ... 92%" de pytest-cov : on capture le dernier pourcentage de la ligne.
+  coverage: '/^TOTAL.*\s(\d+(?:\.\d+)?)%/'
+  artifacts:
+    when: always
+    expire_in: 1 week
+    paths:
+      - reports/junit.xml
+      - coverage.xml
+    reports:
+      junit: reports/junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+# =============================================================================
+# release (main uniquement)
+# =============================================================================
+release:
+  extends: .node
+  stage: release
+  needs:
+    - lint
+    - typecheck
+    - test
+  rules:
+    - *if-main
+  # Un tag publié à moitié ne doit jamais être annulé par une pipeline plus récente.
+  interruptible: false
+  resource_group: release
+  variables:
+    GIT_DEPTH: "0"          # semantic-release analyse tout l'historique depuis le dernier tag
+    GIT_STRATEGY: clone     # dépôt propre (pas de tags/branches locaux d'une exécution précédente)
+    # GITLAB_TOKEN : variable CI masquée/protégée (project access token Maintainer, posée par le
+    # bootstrap). @semantic-release/gitlab lit CI_SERVER_URL / CI_API_V4_URL pour l'URL GitLab.
+  script:
+    # Le rapport dotenv doit toujours exister ; une ligne vide ou un commentaire y est invalide.
+    # semantic-release (@semantic-release/exec, successCmd) le réécrit quand une version est publiée :
+    #   RELEASED=true / VERSION=X.Y.Z / RELEASE_TAG=vX.Y.Z
+    - echo "RELEASED=false" > release.env
+    - npx --no-install semantic-release
+    - cat release.env
+  artifacts:
+    expire_in: 1 week
+    reports:
+      dotenv: release.env
+
+# =============================================================================
+# build (kaniko, pas de Docker-in-Docker)
+# =============================================================================
+.kaniko:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:v1.23.2-debug
+    entrypoint: [""]
+  needs:
+    - lint
+    - typecheck
+    - test
+  variables:
+    KANIKO_EXTRA_ARGS: ""
+  before_script:
+    # Authentification au registre GitLab avec le job token.
+    - mkdir -p /kaniko/.docker
+    - AUTH="$(printf '%s:%s' "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')"
+    - printf '{"auths":{"%s":{"auth":"%s"}}}' "$CI_REGISTRY" "$AUTH" > /kaniko/.docker/config.json
+  script:
+    # IMAGE_DESTINATION et IMAGE_VERSION sont fixées par chaque variante (ou par le dotenv de release).
+    - echo "Construction de ${IMAGE_DESTINATION} (version ${IMAGE_VERSION})"
+    # KANIKO_EXTRA_ARGS est volontairement non quoté (vide ou --no-push).
+    - >-
+      /kaniko/executor
+      --context "$CI_PROJECT_DIR"
+      --dockerfile "$CI_PROJECT_DIR/Dockerfile"
+      --destination "$IMAGE_DESTINATION"
+      $KANIKO_EXTRA_ARGS
+      --insecure --insecure-pull --skip-tls-verify
+      --cache=true --cache-repo "$CI_REGISTRY_IMAGE/cache"
+      --build-arg "APP_VERSION=$IMAGE_VERSION"
+      --build-arg "APP_COMMIT=$CI_COMMIT_SHA"
+      --build-arg "APP_SOURCE=$CI_PROJECT_URL"
+      --label "org.opencontainers.image.source=$CI_PROJECT_URL"
+      --label "org.opencontainers.image.revision=$CI_COMMIT_SHA"
+      --label "org.opencontainers.image.version=$IMAGE_VERSION"
+      --label "org.opencontainers.image.created=$CI_PIPELINE_CREATED_AT"
+
+build-mr:
+  extends: .kaniko
+  rules:
+    - *if-mr
+  variables:
+    IMAGE_DESTINATION: $CI_REGISTRY_IMAGE/mr/notes-api:mr-$CI_MERGE_REQUEST_IID
+    IMAGE_VERSION: mr-$CI_MERGE_REQUEST_IID
+    KANIKO_EXTRA_ARGS: --no-push
+
+build-develop:
+  extends: .kaniko
+  rules:
+    - *if-develop
+  variables:
+    IMAGE_DESTINATION: $CI_REGISTRY_IMAGE/develop/notes-api:$CI_COMMIT_SHORT_SHA
+    IMAGE_VERSION: $CI_COMMIT_SHORT_SHA
+
+build-main:
+  extends: .kaniko
+  rules:
+    - *if-main
+  # release a déjà attendu les tests ; on récupère son rapport dotenv (VERSION).
+  needs:
+    - job: release
+      artifacts: true
+  interruptible: false
+  script:
+    # Les variables dotenv ne sont pas visibles dans `rules:` (évaluées à la création de la
+    # pipeline) : le test « pas de release » se fait donc ici.
+    - |
+      if [ -z "${VERSION:-}" ]; then
+        echo "no release : semantic-release n'a rien publié, pas d'image à construire."
+        exit 0
+      fi
+    - export IMAGE_DESTINATION="$CI_REGISTRY_IMAGE/main/notes-api:$VERSION"
+    - export IMAGE_VERSION="$VERSION"
+    - !reference [.kaniko, script]
+
+# =============================================================================
+# promote (API GitLab, aucun clone du dépôt manifests) — CONTRACT §5
+# =============================================================================
+.promote:
+  stage: promote
+  image: python:3.13-alpine3.22
+  # Une promotion à moitié faite ne doit pas être annulée ; une seule à la fois par environnement.
+  interruptible: false
+  variables:
+    GIT_DEPTH: "1"
+    # MANIFESTS_TOKEN / MANIFESTS_PROJECT : variables CI protégées posées par le bootstrap.
+
+promote-dev:
+  extends: .promote
+  rules:
+    - *if-develop
+  needs:
+    - build-develop
+  resource_group: promote-dev
+  script:
+    - >-
+      python3 ci/promote.py
+      --env dev
+      --repository "$CI_REGISTRY_IMAGE/develop/notes-api"
+      --tag "$CI_COMMIT_SHORT_SHA"
+      --ref "$CI_COMMIT_BRANCH"
+      --commit "$CI_COMMIT_SHA"
+      --pipeline-url "$CI_PIPELINE_URL"
+      --auto-merge
+
+promote-prod:
+  extends: .promote
+  rules:
+    - *if-main
+  needs:
+    - job: release        # pour le dotenv VERSION / RELEASE_TAG
+      artifacts: true
+    - job: build-main
+      artifacts: false
+  resource_group: promote-prod
+  script:
+    - |
+      if [ -z "${VERSION:-}" ]; then
+        echo "no release : rien à promouvoir en prod."
+        exit 0
+      fi
+    # Pas d'--auto-merge : la MR de prod est relue et mergée par le lead.
+    - >-
+      python3 ci/promote.py
+      --env prod
+      --repository "$CI_REGISTRY_IMAGE/main/notes-api"
+      --tag "$VERSION"
+      --ref "${RELEASE_TAG:-v$VERSION}"
+      --commit "$CI_COMMIT_SHA"
+      --pipeline-url "$CI_PIPELINE_URL"

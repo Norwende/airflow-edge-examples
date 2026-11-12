@@ -1,0 +1,33 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>gitops/renovate"],
+  "enabledManagers": ["helm-values", "gitlabci", "helmv3"],
+  "helm-values": {
+    "managerFilePatterns": [
+      "/^charts/infra/.+/envs/[^/]+/version\\.ya?ml$/",
+      "/^charts/infra/.+/envs/[^/]+/values\\.ya?ml$/",
+      "/(^|/)values\\.ya?ml$/"
+    ]
+  },
+  "ignorePaths": ["charts/apps/**/version.yaml", "rendered/**"],
+  "packageRules": [
+    {
+      "description": "version.yaml des charts infra : tag nu (le chart elastic s'en sert comme spec.version ECK), jamais de digest",
+      "matchManagers": ["helm-values"],
+      "pinDigests": false
+    },
+    {
+      "description": "Pile Elastic : Elasticsearch/Kibana et Filebeat doivent rester à la même version",
+      "matchManagers": ["helm-values"],
+      "matchPackageNames": ["docker.elastic.co/elasticsearch/elasticsearch", "docker.elastic.co/beats/filebeat"],
+      "groupName": "elastic stack"
+    },
+    {
+      "description": "PostgreSQL majeur : la montée de version CNPG se prépare (sauvegarde, test) — label dédié, relecture obligatoire",
+      "matchManagers": ["helm-values"],
+      "matchPackageNames": ["ghcr.io/cloudnative-pg/postgresql"],
+      "matchUpdateTypes": ["major"],
+      "addLabels": ["postgres-major"]
+    }
+  ]
+}

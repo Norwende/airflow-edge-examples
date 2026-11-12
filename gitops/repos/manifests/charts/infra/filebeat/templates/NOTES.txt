@@ -1,0 +1,3 @@
+Beat {{ include "filebeat.name" . }} (Filebeat {{ .Values.image.tag }}) dans {{ .Values.namespace }} :
+collecte les pods de {{ include "filebeat.sourceNamespace" . }} vers {{ .Values.elasticsearchRef.name }}.
+  kubectl -n {{ .Values.namespace }} get beat {{ include "filebeat.name" . }}

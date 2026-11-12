@@ -1,0 +1,4 @@
+# postgres — environnement dev (namespace gitops-dev).
+# Version de PostgreSQL : voir version.yaml (Renovate).
+env: dev
+instances: 1

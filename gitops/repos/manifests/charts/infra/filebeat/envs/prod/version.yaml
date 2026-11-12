@@ -1,0 +1,5 @@
+# Version de Filebeat — mise à jour par Renovate via MR.
+# Garder la même version que la pile Elastic (charts/infra/elastic).
+image:
+  repository: docker.elastic.co/beats/filebeat
+  tag: "8.19.6"

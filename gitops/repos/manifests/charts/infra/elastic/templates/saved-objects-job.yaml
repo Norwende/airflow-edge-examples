@@ -1,0 +1,97 @@
+{{- if .Values.savedObjects.enabled -}}
+# Hook Argo CD PostSync : après chaque synchronisation, attend que Kibana réponde
+# puis importe (overwrite) les objets sauvegardés. Idempotent.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.kibana.name }}-import-saved-objects
+  labels:
+    app.kubernetes.io/name: kibana-saved-objects
+    app.kubernetes.io/instance: {{ .Values.kibana.name }}
+    {{- include "elastic.labels" . | nindent 4 }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 10
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kibana-saved-objects
+        app.kubernetes.io/instance: {{ .Values.kibana.name }}
+      annotations:
+        # Le contenu de l'import fait partie du gabarit : un changement du NDJSON
+        # change le pod (lisibilité dans Argo CD).
+        checksum/saved-objects: {{ .Files.Get "files/saved-objects.ndjson" | sha256sum }}
+    spec:
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: import
+          image: {{ .Values.savedObjects.image }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          env:
+            - name: KIBANA_URL
+              value: "http://{{ include "elastic.kibanaService" . }}:5601"
+            - name: MAX_ATTEMPTS
+              value: {{ .Values.savedObjects.maxAttempts | quote }}
+            - name: ELASTIC_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "elastic.elasticUserSecret" . }}
+                  key: elastic
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              i=0
+              while :; do
+                code=$(curl -s -o /dev/null -w '%{http_code}' -u "elastic:${ELASTIC_PASSWORD}" "${KIBANA_URL}/api/status" || true)
+                [ "$code" = "200" ] && break
+                i=$((i + 1))
+                if [ "$i" -ge "$MAX_ATTEMPTS" ]; then
+                  echo "Kibana indisponible après ${MAX_ATTEMPTS} tentatives (dernier code HTTP: ${code})" >&2
+                  exit 1
+                fi
+                echo "Kibana pas encore prête (HTTP ${code}), tentative ${i}/${MAX_ATTEMPTS}"
+                sleep 10
+              done
+              echo "Kibana prête, import des objets sauvegardés"
+              resp=$(curl -sS --fail-with-body -u "elastic:${ELASTIC_PASSWORD}" \
+                -H 'kbn-xsrf: true' \
+                -F 'file=@/import/saved-objects.ndjson' \
+                "${KIBANA_URL}/api/saved_objects/_import?overwrite=true")
+              echo "$resp"
+              case "$resp" in
+                *'"success":true'*) echo "Import réussi" ;;
+                *) echo "Import partiel ou en échec (voir errors ci-dessus)" >&2; exit 1 ;;
+              esac
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: saved-objects
+              mountPath: /import
+              readOnly: true
+      volumes:
+        - name: saved-objects
+          configMap:
+            name: {{ .Values.kibana.name }}-saved-objects
+{{- end }}

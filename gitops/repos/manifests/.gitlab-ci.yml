@@ -1,0 +1,81 @@
+# CI du dépôt gitops/manifests : tout changement passe par une MR vers main,
+# et la MR ne peut être mergée que si cette pipeline est verte (y compris les
+# MR de promotion ouvertes par la CI de notes-api et celles de Renovate).
+#
+#   yamllint          syntaxe/style YAML (hors templates Helm)
+#   validate-versions contrat des version.yaml + parse des manifests argocd/
+#   helm-lint         helm lint --strict + helm template par chart et par env
+#   kubeconform       validation des rendus contre les schémas Kubernetes
+
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+default:
+  interruptible: true
+  # Panne du runner (ex. quota ci-jobs atteint quand Renovate ouvre dix MR d'un coup) : un essai
+  # de plus, jamais sur un vrai echec de lint.
+  retry:
+    max: 1
+    when:
+      - runner_system_failure
+
+stages:
+  - lint
+  - render
+  - validate
+
+yamllint:
+  stage: lint
+  image: python:3.13-alpine3.22
+  variables:
+    PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    PIP_ROOT_USER_ACTION: ignore
+  script:
+    - pip install --no-cache-dir yamllint==1.37.1
+    - yamllint --strict --format colored .
+
+validate-versions:
+  stage: lint
+  image: ghcr.io/astral-sh/uv:0.10.8-python3.13-trixie-slim
+  variables:
+    UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
+    UV_PYTHON_DOWNLOADS: never
+  script:
+    # stdlib + PyYAML (épinglé) pour parser entièrement argocd/*.yaml.
+    - uv run --no-project --with pyyaml==6.0.3 scripts/validate_versions.py .
+  cache:
+    key: uv-pyyaml
+    paths:
+      - .cache/uv
+
+helm-lint:
+  stage: render
+  image:
+    name: alpine/helm:4.2.3
+    entrypoint: [""]
+  variables:
+    RENDER_DIR: rendered
+  script:
+    - helm version
+    - sh scripts/render.sh
+  artifacts:
+    name: "rendered-$CI_COMMIT_SHORT_SHA"
+    when: always
+    expire_in: 1 week
+    paths:
+      - rendered/
+
+kubeconform:
+  stage: validate
+  image:
+    name: ghcr.io/yannh/kubeconform:v0.7.0-alpine
+    entrypoint: [""]
+  needs:
+    - job: helm-lint
+      artifacts: true
+  script:
+    # Les CRD (CNPG, ECK) n'ont pas de schéma par défaut : ignorées
+    # (-ignore-missing-schemas) ; les ressources natives sont validées strictement.
+    - /kubeconform -strict -ignore-missing-schemas -summary -output text rendered/

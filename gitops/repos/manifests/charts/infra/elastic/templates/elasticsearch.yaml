@@ -1,0 +1,53 @@
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: {{ .Values.elasticsearch.name }}
+  labels:
+    app.kubernetes.io/name: elasticsearch
+    app.kubernetes.io/instance: {{ .Values.elasticsearch.name }}
+    {{- include "elastic.labels" . | nindent 4 }}
+  annotations:
+    # Ressource à données : Argo CD ne la supprime jamais (même avec prune: true).
+    argocd.argoproj.io/sync-options: Prune=false
+spec:
+  version: {{ .Values.image.tag | quote }}
+  image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+  http:
+    tls:
+      # TLS conservé côté Elasticsearch : les associations ECK (Kibana, Filebeat)
+      # distribuent la CA automatiquement.
+      selfSignedCertificate:
+        disabled: false
+  nodeSets:
+    - name: default
+      count: {{ .Values.elasticsearch.count }}
+      config:
+        node.roles: ["master", "data", "ingest"]
+        # Pas de sysctl vm.max_map_count (pas d'init container privilégié).
+        node.store.allow_mmap: false
+      podTemplate:
+        metadata:
+          labels:
+            gitops.lab/env: {{ .Values.env }}
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: {{ .Values.elasticsearch.javaOpts | quote }}
+              {{- with .Values.elasticsearch.resources }}
+              resources:
+                {{- toYaml . | nindent 16 }}
+              {{- end }}
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: {{ .Values.elasticsearch.storage.size }}
+            {{- with .Values.elasticsearch.storage.storageClass }}
+            storageClassName: {{ . }}
+            {{- end }}

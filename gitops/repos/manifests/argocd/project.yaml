@@ -1,0 +1,28 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: gitops
+  namespace: argocd
+  # Pas de finalizer de projet : la suppression du projet n'est pas bloquée par
+  # des Applications orphelines (elles sont gérées par les ApplicationSets).
+spec:
+  description: Scénario GitOps (notes-api + infra par environnement)
+  sourceRepos:
+    - http://gitlab.127-0-0-1.sslip.io/gitops/manifests.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: gitops-dev
+    - server: https://kubernetes.default.svc
+      namespace: gitops-prod
+    - server: https://kubernetes.default.svc
+      namespace: logging
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRole
+    - group: rbac.authorization.k8s.io
+      kind: ClusterRoleBinding
+  orphanedResources:
+    warn: true

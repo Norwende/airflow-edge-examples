@@ -1,0 +1,7 @@
+apiVersion: v2
+name: postgres
+description: Cluster CloudNativePG « notes-pg » (base notes de l'application notes-api)
+type: application
+version: 0.1.0
+# Version de PostgreSQL réellement déployée : image.tag (envs/<env>/version.yaml).
+appVersion: "17"

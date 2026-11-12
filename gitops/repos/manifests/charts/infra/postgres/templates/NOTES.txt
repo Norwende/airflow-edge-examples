@@ -1,0 +1,3 @@
+Cluster CloudNativePG {{ .Values.clusterName }} ({{ .Values.instances }} instance(s), PostgreSQL {{ .Values.image.tag }}).
+Secret applicatif généré par l'opérateur : {{ .Values.clusterName }}-app (clé uri).
+  kubectl -n {{ .Release.Namespace }} get cluster {{ .Values.clusterName }}

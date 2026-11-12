@@ -1,0 +1,27 @@
+---
+# yamllint du dépôt gitops/manifests.
+# Les templates Helm ne sont pas du YAML valide avant rendu : ils sont exclus
+# (ils sont vérifiés par helm lint + kubeconform sur le rendu).
+extends: default
+
+ignore: |
+  charts/**/templates/
+  rendered/
+  .cache/
+
+rules:
+  document-start: disable
+  line-length:
+    max: 160
+    level: warning
+  truthy:
+    check-keys: false
+  comments:
+    min-spaces-from-content: 1
+  indentation:
+    spaces: 2
+    indent-sequences: consistent
+  braces:
+    max-spaces-inside: 1
+  brackets:
+    max-spaces-inside: 1

@@ -1,0 +1,15 @@
+{{- if .Values.savedObjects.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.kibana.name }}-saved-objects
+  labels:
+    app.kubernetes.io/name: kibana-saved-objects
+    app.kubernetes.io/instance: {{ .Values.kibana.name }}
+    {{- include "elastic.labels" . | nindent 4 }}
+data:
+  # Data view filebeat-* (id filebeat-logs), recherche « Logs notes-api »,
+  # visualisation Lens « Logs par niveau » et dashboard « notes-api — logs ».
+  saved-objects.ndjson: |-
+    {{- .Files.Get "files/saved-objects.ndjson" | trim | nindent 4 }}
+{{- end }}

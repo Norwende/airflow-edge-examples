@@ -1,0 +1,4 @@
+# Version de PostgreSQL (image CloudNativePG) — mise à jour par Renovate via MR.
+image:
+  repository: ghcr.io/cloudnative-pg/postgresql
+  tag: "17.11"

@@ -1,0 +1,35 @@
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: {{ .Values.kibana.name }}
+  labels:
+    app.kubernetes.io/name: kibana
+    app.kubernetes.io/instance: {{ .Values.kibana.name }}
+    {{- include "elastic.labels" . | nindent 4 }}
+spec:
+  # Même version que l'Elasticsearch ; pas de champ image : ECK utilise
+  # docker.elastic.co/kibana/kibana:<version>.
+  version: {{ .Values.image.tag | quote }}
+  count: {{ .Values.kibana.count }}
+  elasticsearchRef:
+    name: {{ .Values.elasticsearch.name }}
+  http:
+    tls:
+      # HTTP simple derrière Traefik (lab sans TLS).
+      selfSignedCertificate:
+        disabled: true
+  config:
+    server.publicBaseUrl: "http://{{ .Values.kibana.host }}"
+    telemetry.enabled: false
+    xpack.reporting.enabled: false
+  podTemplate:
+    metadata:
+      labels:
+        gitops.lab/env: {{ .Values.env }}
+    spec:
+      containers:
+        - name: kibana
+          {{- with .Values.kibana.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

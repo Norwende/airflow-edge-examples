@@ -1,0 +1,14 @@
+# notes-api — environnement dev (namespace gitops-dev).
+# L'image (repository/tag) n'est PAS ici : voir version.yaml (écrit par la CI).
+env: dev
+logLevel: DEBUG
+replicaCount: 1
+ingress:
+  enabled: true
+  host: notes.dev.127-0-0-1.sslip.io
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    memory: 192Mi

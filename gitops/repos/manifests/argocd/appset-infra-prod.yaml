@@ -1,0 +1,82 @@
+---
+# ApplicationSet gitops-infra-prod : une Application par fichier
+# charts/infra/<chart>/envs/prod/version.yaml (générateur git "files").
+# Avec ce générateur, .path.basename vaut "prod" (dossier du version.yaml) :
+# le nom du chart est donc .path.segments[2] et le type .path.segments[1].
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gitops-infra-prod
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    # Supprimer l'ApplicationSet (ou renommer un dossier) ne supprime pas les
+    # ressources déployées : une base de données ne disparaît pas par accident.
+    preserveResourcesOnDeletion: true
+  generators:
+    - git:
+        repoURL: http://gitlab.127-0-0-1.sslip.io/gitops/manifests.git
+        revision: main
+        requeueAfterSeconds: 60
+        files:
+          - path: charts/infra/*/envs/prod/version.yaml
+  template:
+    metadata:
+      name: 'gitops-prod-{{ index .path.segments 2 }}'
+      labels:
+        gitops.lab/env: prod
+        gitops.lab/kind: infra
+        gitops.lab/component: '{{ index .path.segments 2 }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "-1"
+    spec:
+      project: gitops
+      source:
+        repoURL: http://gitlab.127-0-0-1.sslip.io/gitops/manifests.git
+        targetRevision: main
+        path: 'charts/{{ index .path.segments 1 }}/{{ index .path.segments 2 }}'
+        helm:
+          releaseName: '{{ index .path.segments 2 }}'
+          valueFiles:
+            - envs/prod/values.yaml
+          # version.yaml fait foi : ces paramètres écrasent toute valeur image.*
+          # présente dans values.yaml.
+          parameters:
+            - name: image.repository
+              value: '{{ .image.repository }}'
+              forceString: true
+            - name: image.tag
+              value: '{{ .image.tag }}'
+              forceString: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gitops-prod
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - PrunePropagationPolicy=foreground
+          - RespectIgnoreDifferences=true
+        managedNamespaceMetadata:
+          labels:
+            pod-security.kubernetes.io/enforce: baseline
+            pod-security.kubernetes.io/warn: restricted
+            pod-security.kubernetes.io/audit: restricted
+        retry:
+          limit: 10
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 5m
+      ignoreDifferences:
+        # Les volumeClaimTemplates sont complétés par l'API (status, defaults)
+        # et sont immuables : ne pas les considérer comme une dérive.
+        - group: apps
+          kind: StatefulSet
+          jqPathExpressions:
+            - .spec.volumeClaimTemplates[]?

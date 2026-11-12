@@ -1,0 +1,7 @@
+apiVersion: v2
+name: elastic
+description: Elasticsearch « notes-es » + Kibana « notes-kibana » (ECK), Ingress Kibana et import des objets Kibana
+type: application
+version: 0.1.0
+# Version de la pile Elastic réellement déployée : image.tag (envs/<env>/version.yaml).
+appVersion: "8.19.6"

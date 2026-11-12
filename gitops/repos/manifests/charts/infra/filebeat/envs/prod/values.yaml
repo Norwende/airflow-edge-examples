@@ -1,0 +1,4 @@
+# filebeat — environnement prod : DaemonSet filebeat-prod (namespace logging)
+# qui collecte gitops-prod et envoie à notes-es de gitops-prod.
+# Version de Filebeat : voir version.yaml (Renovate).
+env: prod

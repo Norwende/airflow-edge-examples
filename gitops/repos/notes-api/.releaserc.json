@@ -1,0 +1,22 @@
+{
+  "branches": ["main"],
+  "tagFormat": "v${version}",
+  "plugins": [
+    ["@semantic-release/commit-analyzer", { "preset": "conventionalcommits" }],
+    ["@semantic-release/release-notes-generator", { "preset": "conventionalcommits" }],
+    [
+      "@semantic-release/exec",
+      {
+        "successCmd": "printf 'RELEASED=true\nVERSION=%s\nRELEASE_TAG=%s\n' '${nextRelease.version}' '${nextRelease.gitTag}' > release.env"
+      }
+    ],
+    [
+      "@semantic-release/gitlab",
+      {
+        "assets": [],
+        "successComment": false,
+        "failComment": false
+      }
+    ]
+  ]
+}

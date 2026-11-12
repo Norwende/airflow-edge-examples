@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>gitops/renovate"],
+  "enabledManagers": ["pep621", "dockerfile", "gitlabci", "npm"],
+  "packageRules": [
+    {
+      "description": "Outillage de release (semantic-release, commitlint) : un seul MR groupé.",
+      "matchManagers": ["npm"],
+      "groupName": "release tooling",
+      "groupSlug": "release-tooling"
+    },
+    {
+      "description": "Une seule version de uv partout (image de build du Dockerfile et image CI).",
+      "matchPackageNames": ["ghcr.io/astral-sh/uv"],
+      "groupName": "uv",
+      "groupSlug": "uv"
+    }
+  ]
+}

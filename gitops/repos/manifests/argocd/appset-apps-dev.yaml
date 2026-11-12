@@ -1,0 +1,79 @@
+---
+# ApplicationSet gitops-apps-dev : une Application par fichier
+# charts/apps/<chart>/envs/dev/version.yaml (générateur git "files").
+# Avec ce générateur, .path.basename vaut "dev" (dossier du version.yaml) :
+# le nom du chart est donc .path.segments[2] et le type .path.segments[1].
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gitops-apps-dev
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: http://gitlab.127-0-0-1.sslip.io/gitops/manifests.git
+        revision: main
+        requeueAfterSeconds: 60
+        files:
+          - path: charts/apps/*/envs/dev/version.yaml
+  template:
+    metadata:
+      name: 'gitops-dev-{{ index .path.segments 2 }}'
+      labels:
+        gitops.lab/env: dev
+        gitops.lab/kind: app
+        gitops.lab/component: '{{ index .path.segments 2 }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "1"
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: gitops
+      source:
+        repoURL: http://gitlab.127-0-0-1.sslip.io/gitops/manifests.git
+        targetRevision: main
+        path: 'charts/{{ index .path.segments 1 }}/{{ index .path.segments 2 }}'
+        helm:
+          releaseName: '{{ index .path.segments 2 }}'
+          valueFiles:
+            - envs/dev/values.yaml
+          # version.yaml fait foi : ces paramètres écrasent toute valeur image.*
+          # présente dans values.yaml.
+          parameters:
+            - name: image.repository
+              value: '{{ .image.repository }}'
+              forceString: true
+            - name: image.tag
+              value: '{{ .image.tag }}'
+              forceString: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gitops-dev
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - PrunePropagationPolicy=foreground
+          - RespectIgnoreDifferences=true
+        managedNamespaceMetadata:
+          labels:
+            pod-security.kubernetes.io/enforce: baseline
+            pod-security.kubernetes.io/warn: restricted
+            pod-security.kubernetes.io/audit: restricted
+        retry:
+          limit: 10
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 5m
+      ignoreDifferences:
+        # Le HPA (si activé) pilote le nombre de réplicas.
+        - group: apps
+          kind: Deployment
+          jsonPointers:
+            - /spec/replicas

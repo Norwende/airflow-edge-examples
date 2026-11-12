@@ -1,0 +1,42 @@
+# Valeurs par défaut du chart elastic.
+# image.repository / image.tag viennent de envs/<env>/version.yaml (Renovate).
+# image.tag est la version de TOUTE la pile (Elasticsearch, Kibana) : ECK en dérive
+# l'image Kibana par défaut (docker.elastic.co/kibana/kibana:<tag>).
+image:
+  repository: ""
+  tag: ""
+
+env: dev
+
+elasticsearch:
+  name: notes-es
+  count: 1
+  javaOpts: "-Xms512m -Xmx512m"
+  resources:
+    requests:
+      cpu: 200m
+      memory: 1Gi
+    limits:
+      memory: 1536Mi
+  storage:
+    size: 2Gi
+    storageClass: local-path
+
+kibana:
+  name: notes-kibana
+  count: 1
+  host: kibana.dev.127-0-0-1.sslip.io
+  ingressClassName: traefik
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+# Job PostSync d'import des objets Kibana (data view, recherche, dashboard).
+savedObjects:
+  enabled: true
+  image: curlimages/curl:8.11.1
+  # Attente max de Kibana (tentatives x 10 s).
+  maxAttempts: 90

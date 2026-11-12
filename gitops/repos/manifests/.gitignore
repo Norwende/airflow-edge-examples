@@ -1,0 +1,4 @@
+# Rendus locaux / CI (scripts/render.sh) et caches
+rendered/
+.cache/
+__pycache__/

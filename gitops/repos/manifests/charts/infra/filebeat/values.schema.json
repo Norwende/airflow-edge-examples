@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "filebeat values",
+  "type": "object",
+  "required": ["image", "env", "namespace", "elasticsearchRef"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"}
+      },
+      "additionalProperties": false
+    },
+    "env": {"type": "string", "enum": ["dev", "prod"]},
+    "namespace": {"type": "string", "minLength": 1},
+    "elasticsearchRef": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {"name": {"type": "string", "minLength": 1}},
+      "additionalProperties": false
+    },
+    "resources": {"type": "object"},
+    "indexReplicas": {"type": "integer", "minimum": 0}
+  },
+  "additionalProperties": false
+}

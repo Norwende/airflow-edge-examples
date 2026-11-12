@@ -1,0 +1,8 @@
+# charts/apps/notes-api/envs/prod/version.yaml  (écrit par la CI de gitops/notes-api, jamais à la main)
+image:
+  repository: registry.127-0-0-1.sslip.io/gitops/notes-api/main/notes-api
+  tag: "1.1.0"
+source:                       # traçabilité, informatif
+  commit: 8285bc223ec8ab230ed9c96886a3360a9d7bc135
+  ref: v1.1.0
+  pipeline: http://gitlab.127-0-0-1.sslip.io/gitops/notes-api/-/pipelines/34

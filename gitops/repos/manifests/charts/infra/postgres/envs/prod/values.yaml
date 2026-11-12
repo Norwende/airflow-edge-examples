@@ -1,0 +1,13 @@
+# postgres — environnement prod (namespace gitops-prod).
+# Version de PostgreSQL : voir version.yaml (Renovate).
+env: prod
+# 1 seule instance : le lab n'a qu'un nœud et 20 Gi de RAM. Sur un vrai cluster,
+# passer à 2 (primaire + réplica en streaming, bascule automatique par CNPG) et
+# réactiver enablePDB.
+instances: 1
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 768Mi

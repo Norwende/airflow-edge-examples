@@ -1,0 +1,34 @@
+# Python / uv
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+build/
+dist/
+
+# Outils
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# Rapports produits par les tests et la CI
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+reports/
+gl-code-quality-report.json
+
+# semantic-release (dépendances npm de la CI)
+node_modules/
+
+# Divers
+.env
+.idea/
+.vscode/
+.DS_Store
+
+# Caches CI et rapport dotenv de semantic-release
+.uv-cache/
+.npm/
+release.env

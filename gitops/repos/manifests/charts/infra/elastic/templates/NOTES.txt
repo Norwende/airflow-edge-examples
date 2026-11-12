@@ -1,0 +1,4 @@
+Elasticsearch {{ .Values.elasticsearch.name }} et Kibana {{ .Values.kibana.name }} ({{ .Values.image.tag }}) gérés par ECK.
+Kibana : http://{{ .Values.kibana.host }}  (utilisateur elastic)
+Mot de passe :
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "elastic.elasticUserSecret" . }} -o jsonpath='{.data.elastic}' | base64 -d

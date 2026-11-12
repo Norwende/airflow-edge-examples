@@ -1,0 +1,8 @@
+notes-api {{ .Values.image.tag }} déployé dans {{ .Release.Namespace }} (env {{ .Values.env }}).
+{{- if .Values.ingress.enabled }}
+
+  curl http://{{ .Values.ingress.host }}/version
+  curl http://{{ .Values.ingress.host }}/notes
+{{- end }}
+
+DATABASE_URL provient du Secret {{ .Values.database.secretName }} (clé {{ .Values.database.secretKey }}).

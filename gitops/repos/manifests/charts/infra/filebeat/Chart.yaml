@@ -1,0 +1,7 @@
+apiVersion: v2
+name: filebeat
+description: Beat ECK « filebeat-<env> » (DaemonSet dans logging) qui collecte les logs des pods de gitops-<env>
+type: application
+version: 0.1.0
+# Version de Filebeat réellement déployée : image.tag (envs/<env>/version.yaml).
+appVersion: "8.19.6"

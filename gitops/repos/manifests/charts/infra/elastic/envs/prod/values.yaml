@@ -1,0 +1,6 @@
+# elastic — environnement prod (namespace gitops-prod).
+# Version de la pile Elastic : voir version.yaml (Renovate).
+env: prod
+kibana:
+  name: notes-kibana
+  host: kibana.prod.127-0-0-1.sslip.io

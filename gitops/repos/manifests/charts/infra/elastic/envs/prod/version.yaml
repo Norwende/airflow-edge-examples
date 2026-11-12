@@ -1,0 +1,5 @@
+# Version de la pile Elastic (Elasticsearch ; Kibana suit la même version) —
+# mise à jour par Renovate via MR. Garder filebeat à la même version.
+image:
+  repository: docker.elastic.co/elasticsearch/elasticsearch
+  tag: "8.19.6"

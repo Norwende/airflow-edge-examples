@@ -1,0 +1,27 @@
+# Valeurs par défaut du chart filebeat.
+# image.repository / image.tag viennent de envs/<env>/version.yaml (Renovate) ;
+# garder la même version que la pile Elastic (charts/infra/elastic).
+image:
+  repository: ""
+  tag: ""
+
+# Environnement collecté : le Beat ne lit que les pods du namespace gitops-<env>
+# et envoie à l'Elasticsearch notes-es de ce namespace.
+env: dev
+
+# Namespace du DaemonSet (PSA privileged, créé par la plateforme).
+namespace: logging
+
+elasticsearchRef:
+  name: notes-es
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 100Mi
+  limits:
+    memory: 300Mi
+
+# Lab mono-nœud : pas de réplica pour les index Filebeat, sinon l'Elasticsearch
+# reste « yellow » et Argo CD le voit Progressing (le hook PostSync ne part pas).
+indexReplicas: 0

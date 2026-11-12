@@ -1,0 +1,36 @@
+# Valeurs par défaut du chart postgres (Cluster CNPG notes-pg).
+# image.repository / image.tag viennent de envs/<env>/version.yaml (Renovate).
+image:
+  repository: ""
+  tag: ""
+
+env: dev
+
+# Nom du Cluster : le Secret applicatif généré par CNPG s'appelle <name>-app
+# (notes-pg-app, clé uri), consommé par notes-api.
+clusterName: notes-pg
+
+instances: 1
+
+database: notes
+owner: notes
+
+storage:
+  size: 2Gi
+  storageClass: local-path
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 512Mi
+
+# Paramètres PostgreSQL minimaux pour un lab (valeurs chaînes, exigées par CNPG).
+parameters:
+  max_connections: "100"
+  shared_buffers: "64MB"
+  log_min_duration_statement: "1000"
+
+# Un PDB sur une instance unique bloque le drain du nœud : désactivé en mono-instance.
+enablePDB: false

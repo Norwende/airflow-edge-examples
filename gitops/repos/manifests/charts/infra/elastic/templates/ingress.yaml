@@ -1,0 +1,21 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.kibana.name }}
+  labels:
+    app.kubernetes.io/name: kibana
+    app.kubernetes.io/instance: {{ .Values.kibana.name }}
+    {{- include "elastic.labels" . | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.kibana.ingressClassName }}
+  rules:
+    - host: {{ .Values.kibana.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "elastic.kibanaService" . }}
+                port:
+                  number: 5601

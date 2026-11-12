@@ -1,0 +1,8 @@
+apiVersion: v2
+name: notes-api
+description: API REST de notes (FastAPI + PostgreSQL) du scénario GitOps
+type: application
+# La version du chart évolue avec le chart ; la version applicative réelle est
+# image.tag, injectée par Argo CD depuis envs/<env>/version.yaml.
+version: 0.1.0
+appVersion: "0.0.0"

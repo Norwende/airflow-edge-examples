@@ -1,0 +1,99 @@
+{{- $src := include "filebeat.sourceNamespace" . -}}
+apiVersion: beat.k8s.elastic.co/v1beta1
+kind: Beat
+metadata:
+  name: {{ include "filebeat.name" . }}
+  # Explicite : le DaemonSet tourne dans logging (PSA privileged), pas dans
+  # le namespace de destination de l'Application (gitops-<env>).
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "filebeat.labels" . | nindent 4 }}
+spec:
+  type: filebeat
+  version: {{ .Values.image.tag | quote }}
+  image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+  # Référence inter-namespaces vers l'Elasticsearch de l'environnement : ECK crée
+  # l'utilisateur, le Secret et la CA nécessaires dans logging.
+  elasticsearchRef:
+    name: {{ .Values.elasticsearchRef.name }}
+    namespace: {{ $src }}
+  config:
+    logging.json: true
+    filebeat.autodiscover:
+      providers:
+        - type: kubernetes
+          node: ${NODE_NAME}
+          # Ne surveille que les pods du namespace de l'environnement.
+          namespace: {{ $src }}
+          templates:
+            - condition:
+                equals:
+                  kubernetes.namespace: {{ $src }}
+              config:
+                - type: container
+                  paths:
+                    - /var/log/containers/*${data.kubernetes.container.id}.log
+                  processors:
+                    # Les logs de notes-api sont du JSON structlog : on remonte
+                    # les champs (log.level, message, request_id...) à la racine.
+                    - decode_json_fields:
+                        fields: ["message"]
+                        target: ""
+                        overwrite_keys: true
+                        add_error_key: true
+                        expand_keys: true
+                        max_depth: 2
+                    - drop_fields:
+                        fields: ["agent.ephemeral_id", "agent.id", "agent.name", "agent.type", "ecs.version", "input.type"]
+                        ignore_missing: true
+    processors:
+      - add_host_metadata: {}
+    # Index par défaut (data stream filebeat-<version>), ILM par défaut.
+    setup.template.settings:
+      index.number_of_replicas: {{ .Values.indexReplicas }}
+  daemonSet:
+    podTemplate:
+      metadata:
+        labels:
+          {{- include "filebeat.labels" . | nindent 10 }}
+      spec:
+        serviceAccountName: {{ include "filebeat.name" . }}
+        automountServiceAccountToken: true
+        terminationGracePeriodSeconds: 30
+        dnsPolicy: ClusterFirstWithHostNet
+        hostNetwork: false
+        securityContext:
+          runAsUser: 0
+        containers:
+          - name: filebeat
+            securityContext:
+              runAsUser: 0
+            env:
+              - name: NODE_NAME
+                valueFrom:
+                  fieldRef:
+                    fieldPath: spec.nodeName
+            {{- with .Values.resources }}
+            resources:
+              {{- toYaml . | nindent 14 }}
+            {{- end }}
+            volumeMounts:
+              - name: varlogcontainers
+                mountPath: /var/log/containers
+                readOnly: true
+              - name: varlogpods
+                mountPath: /var/log/pods
+                readOnly: true
+              - name: varlibdockercontainers
+                mountPath: /var/lib/docker/containers
+                readOnly: true
+        volumes:
+          - name: varlogcontainers
+            hostPath:
+              path: /var/log/containers
+          - name: varlogpods
+            hostPath:
+              path: /var/log/pods
+          - name: varlibdockercontainers
+            hostPath:
+              path: /var/lib/docker/containers

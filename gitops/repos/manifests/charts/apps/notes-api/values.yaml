@@ -1,0 +1,118 @@
+# Valeurs par défaut du chart notes-api.
+# image.repository / image.tag sont TOUJOURS fournis par Argo CD (paramètres Helm
+# lus dans envs/<env>/version.yaml) : ne pas les renseigner ici. Le schéma
+# (values.schema.json) refuse un rendu sans eux.
+image:
+  repository: ""
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: registry-credentials
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Environnement applicatif (APP_ENV) : dev | prod | local
+env: dev
+logLevel: INFO
+logFormat: json
+# SHA du commit (APP_COMMIT), optionnel : variable absente si vide.
+appCommit: ""
+
+replicaCount: 1
+
+database:
+  # Secret généré par CloudNativePG pour le Cluster notes-pg.
+  secretName: notes-pg-app
+  secretKey: uri
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  capabilities:
+    drop:
+      - ALL
+
+containerPort: 8000
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: true
+  className: traefik
+  host: notes.dev.127-0-0-1.sslip.io
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 96Mi
+  limits:
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: http
+  initialDelaySeconds: 3
+  periodSeconds: 5
+  timeoutSeconds: 2
+  failureThreshold: 3
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  # Namespace de l'Ingress controller (Traefik) autorisé à joindre les pods.
+  ingressNamespace: kube-system
+  # Port PostgreSQL autorisé en sortie (pods CNPG du même namespace).
+  postgresPort: 5432
+
+topologySpread:
+  enabled: false
+  maxSkew: 1
+  topologyKey: kubernetes.io/hostname
+  whenUnsatisfiable: ScheduleAnyway
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

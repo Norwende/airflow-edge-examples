@@ -1,0 +1,6 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["local>gitops/renovate"],
+  "enabledManagers": ["gitlabci"],
+  "description": "Le bot met à jour sa propre image (renovate/renovate:<version>-full) dans .gitlab-ci.yml."
+}

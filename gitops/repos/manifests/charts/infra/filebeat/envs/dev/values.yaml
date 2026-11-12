@@ -1,0 +1,4 @@
+# filebeat — environnement dev : DaemonSet filebeat-dev (namespace logging)
+# qui collecte gitops-dev et envoie à notes-es de gitops-dev.
+# Version de Filebeat : voir version.yaml (Renovate).
+env: dev

@@ -1,0 +1,73 @@
+[project]
+name = "notes-api"
+# La version de référence est le tag git vX.Y.Z (semantic-release) : ce champ n'est jamais modifié.
+version = "0.0.0"
+description = "API REST de notes (CRUD) sur PostgreSQL — application du scénario GitOps."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.162.2",
+    "psycopg[binary,pool]>=3.3.8",
+    "pydantic-settings>=2.16.2",
+    "structlog>=26.1.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.8,<0.11"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.16.0",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.4",
+]
+
+# --------------------------------------------------------------------------- qualité
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "N", "SIM"]
+
+[tool.ruff.lint.per-file-ignores]
+# assert est l'outil normal de pytest
+"tests/**" = ["S101"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+python_version = "3.13"
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+# --------------------------------------------------------------------------- tests
+[tool.pytest.ini_options]
+# Le paquet est installé dans le venv par `uv sync` (layout src/) : pas de bidouille de sys.path.
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
+markers = [
+    "integration: tests contre un PostgreSQL réel (ignorés si DATABASE_URL est absente)",
+]
+xfail_strict = true
+
+[tool.coverage.run]
+source = ["notes_api"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    '^\s*\.\.\.\s*$',  # corps des méthodes de Protocol
+]

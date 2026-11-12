@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "postgres values",
+  "type": "object",
+  "required": ["image", "env", "clusterName", "instances", "storage"],
+  "properties": {
+    "image": {
+      "type": "object",
+      "required": ["repository", "tag"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "tag": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "env": {"type": "string", "enum": ["dev", "prod"]},
+    "clusterName": {"type": "string", "minLength": 1},
+    "instances": {"type": "integer", "minimum": 1},
+    "database": {"type": "string", "minLength": 1},
+    "owner": {"type": "string", "minLength": 1},
+    "storage": {
+      "type": "object",
+      "required": ["size"],
+      "properties": {
+        "size": {"type": "string"},
+        "storageClass": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "resources": {"type": "object"},
+    "parameters": {"type": "object", "additionalProperties": {"type": "string"}},
+    "enablePDB": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

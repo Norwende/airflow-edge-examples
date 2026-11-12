@@ -1,0 +1,9 @@
+# Contexte de build minimal : seuls pyproject.toml, uv.lock, .python-version, README.md et src/ servent.
+*
+!pyproject.toml
+!uv.lock
+!.python-version
+!README.md
+!src/
+**/__pycache__
+**/*.py[cod]

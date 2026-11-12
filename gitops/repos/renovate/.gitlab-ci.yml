@@ -1,0 +1,70 @@
+# =============================================================================
+# Bot Renovate auto-hébergé du lab (CONTRACT.md §6).
+#
+#  - schedule « renovate hourly » (0 * * * *, Europe/Paris), posé par scripts/gitlab_bootstrap.py
+#  - lancement manuel : CI/CD > Pipelines > Run pipeline, avec au besoin
+#      RENOVATE_DRY_RUN=full (ou lookup/extract) et LOG_LEVEL=debug
+#  - push sur main (nouvelle config => exécution immédiate)
+#  - MR : validation de la configuration uniquement (job validate)
+# =============================================================================
+
+stages:
+  - validate
+  - renovate
+
+workflow:
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - when: never
+
+variables:
+  # Valeurs par défaut, modifiables au lancement manuel (Run pipeline).
+  LOG_LEVEL:
+    value: info
+    description: "Niveau de log de Renovate (debug, info, warn)."
+  RENOVATE_DRY_RUN:
+    value: ""
+    description: "Vide = exécution réelle ; extract, lookup ou full = simulation."
+
+.renovate-image:
+  image: renovate/renovate:44.222.1-full
+
+validate:
+  extends: .renovate-image
+  stage: validate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    # Valide config.js (configuration globale) et les presets/configs de dépôt.
+    - renovate-config-validator --strict config.js
+    - renovate-config-validator --strict --no-global default.json renovate.json
+
+renovate:
+  extends: .renovate-image
+  stage: renovate
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE =~ /^(web|api|trigger)$/
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"
+  # Jamais deux exécutions en parallèle (elles se marcheraient dessus sur les mêmes MR).
+  resource_group: renovate
+  interruptible: false
+  timeout: 50m
+  variables:
+    RENOVATE_CONFIG_FILE: $CI_PROJECT_DIR/config.js
+    # RENOVATE_TOKEN : variable CI masquée/protégée du projet (PAT de renovate-bot).
+    RENOVATE_BASE_DIR: $CI_PROJECT_DIR/.renovate
+    # Executor Kubernetes : Renovate (+ uv, npm, helm) a besoin de mémoire. Nécessite
+    # memory_request/limit_overwrite_max_allowed dans la config du runner.
+    KUBERNETES_MEMORY_REQUEST: 1Gi
+    KUBERNETES_MEMORY_LIMIT: 2Gi
+  cache:
+    key: renovate
+    paths:
+      - .renovate/cache/renovate/repository/
+  script:
+    - renovate --version
+    - renovate

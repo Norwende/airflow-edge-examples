@@ -1,0 +1,6 @@
+# elastic — environnement dev (namespace gitops-dev).
+# Version de la pile Elastic : voir version.yaml (Renovate).
+env: dev
+kibana:
+  name: notes-kibana
+  host: kibana.dev.127-0-0-1.sslip.io
